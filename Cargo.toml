@@ -1,0 +1,14 @@
+[package]
+name = "shapes"
+version = "0.1.0"
+edition = "2021"
+
+[profile.dev]
+opt-level = 2
+
+[dependencies]
+bevy = { version = "0.13.1", features = ["dynamic_linking"] }
+bevy-inspector-egui = "0.23.4"
+bevy_editor_pls = { git = "https://github.com/chronicl/bevy_editor_pls" }
+bevy_infinite_grid = { git = "https://github.com/XYCaptain/bevy_infinite_grid" }
+bevy_mod_picking = "0.18.2"
