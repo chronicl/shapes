@@ -1,4 +1,4 @@
-use bevy::{audio::Sample, prelude::*, window::PrimaryWindow};
+use bevy::{prelude::*, window::PrimaryWindow};
 
 pub struct WrappingCursorPlugin;
 
