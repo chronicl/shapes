@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use bevy::render::mesh::PrimitiveTopology;
 use bevy::render::render_resource::Face;
 use bevy::render::view::RenderLayers;
-use bevy::utils::{FloatOrd, HashMap};
+use bevy::utils::{FloatOrd, HashMap, HashSet};
 use bevy::{asset::LoadedFolder, gltf::Gltf, prelude::*};
 use bevy_mod_picking::prelude::*;
 use rand::Rng;
@@ -51,19 +51,17 @@ fn setup_gizmo_config(mut config_store: ResMut<GizmoConfigStore>) {
 
 fn update_reference(
     mut gizmo: Gizmos<LineArtGizmo>,
-    mut current_reference: Local<Option<usize>>,
     mut commands: Commands,
-    references: Res<References>,
+    mut refs: ResMut<References>,
     mut timer_events: EventReader<TimerEvent>,
     transform_query: Query<&Transform>,
 ) {
-    let references = references.references();
-    if references.is_empty() {
+    if refs.references.is_empty() {
         return;
     }
 
-    if let Some(current) = *current_reference {
-        let (entity, edges) = &references[current];
+    if let Some(current) = refs.current_reference {
+        let Reference { entity, edges, .. } = &refs.references[current];
 
         let transform = *transform_query.get(*entity).unwrap();
 
@@ -73,41 +71,86 @@ fn update_reference(
     }
 
     // if there is no current reference set yet we do run this function despite the timer not having expired.
-    if timer_events.read().count() == 0 && current_reference.is_some() {
+    if timer_events.read().count() == 0 && refs.current_reference.is_some() {
         return;
     }
 
-    let next = if let Some(current) = *current_reference {
+    if let Some(current) = refs.current_reference {
         commands
-            .entity(references[current].0)
+            .entity(refs.references[current].entity)
             .insert(Visibility::Hidden);
-        (current + 1) % references.len()
-    } else {
-        0
     };
-    *current_reference = Some(next);
-    commands.entity(references[next].0).insert((
-        Visibility::Visible,
-        Transform::from_rotation(random_rotation()),
-    ));
+
+    if let Some(next) = refs.next_reference() {
+        refs.current_reference = Some(next);
+        commands.entity(refs.references[next].entity).insert((
+            Visibility::Visible,
+            Transform::from_rotation(random_rotation()),
+        ));
+    }
 }
 
 #[derive(Resource)]
 pub struct References {
-    references: Vec<(Entity, Vec<(Vec3, Vec3)>)>,
-    loading_folder: Handle<LoadedFolder>,
+    pub references: Vec<Reference>,
+    pub disabled_references: HashSet<usize>,
+    pub current_reference: Option<usize>,
+    pub loading_folder: Handle<LoadedFolder>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Reference {
+    pub name: Name,
+    pub entity: Entity,
+    pub edges: Vec<(Vec3, Vec3)>,
 }
 
 /// Marker
 #[derive(Component, Default)]
-pub struct Reference;
+pub struct ReferenceMarker;
 
 impl References {
     fn new(asset_server: &AssetServer) -> Self {
         Self {
             references: Vec::new(),
-
+            disabled_references: default(),
+            current_reference: None,
             loading_folder: asset_server.load_folder(REFERNCE_FOLDER),
+        }
+    }
+
+    pub fn next_reference(&self) -> Option<usize> {
+        let start = match self.current_reference {
+            Some(current) => current + 1,
+            None => {
+                if self.disabled_references.len() == self.references.len() {
+                    return None;
+                } else {
+                    0
+                }
+            }
+        };
+
+        // We are guaranteed to find a reference because the above match statement ensures it.
+        for i in start.. {
+            let i = i % self.references.len();
+            if !self.disabled_references.contains(&i) {
+                return Some(i);
+            }
+        }
+
+        unreachable!()
+    }
+
+    pub fn set_current(&mut self, index: usize) {
+        self.current_reference = Some(index);
+    }
+
+    pub fn set_active(&mut self, index: usize, active: bool) {
+        if active {
+            self.disabled_references.remove(&index);
+        } else {
+            self.disabled_references.insert(index);
         }
     }
 
@@ -130,11 +173,16 @@ impl References {
                         let scene = scenes.get_mut(&scene_handle).unwrap();
                         let world = &mut scene.world;
 
-                        let mut q = world.query::<(&Handle<Mesh>, &Parent)>();
+                        let mut q = world
+                            .query::<(&Name, &Handle<Mesh>, &Handle<StandardMaterial>, &Parent)>();
 
                         let mut edges = Vec::new();
                         let mut outline_meshes = Vec::new();
-                        for (mesh_handle, parent) in q.iter(world) {
+                        // awkward workaround to get the name of the object
+                        // (assuming a bunch of things like that there is only one object and only one mesh).
+                        let mut name = None;
+                        for (n, mesh_handle, material, parent) in q.iter(world) {
+                            name = Some(n.clone());
                             let mesh = meshes.get(mesh_handle).unwrap();
                             if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
                                 warn!("Mesh is not a triangle list: {:?}", mesh_handle);
@@ -149,7 +197,12 @@ impl References {
                                 generate_outline_mesh(mesh, LINE_ART_THICKNESS).unwrap();
                             let outline_mesh_handle = meshes.add(outline_mesh);
 
-                            outline_meshes.push((parent.get(), outline_mesh_handle))
+                            outline_meshes.push((parent.get(), outline_mesh_handle));
+
+                            let material = materials.get_mut(material).unwrap();
+                            material.base_color = material.base_color.with_a(0.2);
+                            material.alpha_mode = AlphaMode::Blend;
+                            material.cull_mode = Some(Face::Back);
                         }
 
                         let material = materials.add(StandardMaterial {
@@ -176,10 +229,14 @@ impl References {
                                     visibility: Visibility::Hidden,
                                     ..default()
                                 },
-                                Reference,
+                                ReferenceMarker,
                             ))
                             .id();
-                        self.references.push((reference_entity, edges));
+                        self.references.push(Reference {
+                            name: name.unwrap_or_default(),
+                            entity: reference_entity,
+                            edges,
+                        });
                     }
                 }
                 Err(_) => {
@@ -187,10 +244,6 @@ impl References {
                 }
             }
         }
-    }
-
-    pub fn references(&self) -> &[(Entity, Vec<(Vec3, Vec3)>)] {
-        &self.references
     }
 }
 
@@ -227,7 +280,7 @@ pub struct LineArtGizmo;
 
 fn sharp_edge_lines(mesh: &Mesh, radian_range: (f32, f32)) -> Vec<(Vec3, Vec3)> {
     let edge_angles = edge_angles(mesh);
-    println!("{:?}", edge_angles);
+    // println!("{:?}", edge_angles);
 
     let mut lines = Vec::new();
     for (a, b, angle) in edge_angles {

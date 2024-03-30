@@ -6,6 +6,7 @@ use std::{
 };
 
 use bevy::{
+    app::AppExit,
     diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
     input::mouse::MouseWheel,
     prelude::*,
@@ -15,20 +16,14 @@ use bevy::{
         RenderPlugin,
     },
     transform,
+    window::{CompositeAlphaMode, Cursor, WindowLevel, WindowMode},
 };
-use bevy_editor_pls::{
-    default_windows::{
-        cameras::camera_3d_panorbit::{ModifierAndMouseButton, PanOrbitCamera},
-        hierarchy::HierarchyWindow,
-    },
-    editor::Editor,
-    prelude::*,
+
+use bevy_egui::{
+    egui::{self, Checkbox},
+    EguiContexts, EguiPlugin,
 };
 use bevy_infinite_grid::InfiniteGridPlugin;
-use bevy_inspector_egui::{
-    bevy_egui::{egui, EguiContexts},
-    bevy_inspector::hierarchy::SelectionMode,
-};
 use bevy_mod_picking::prelude::*;
 use picking_ext::{PickingExtPlugin, PointerEvent};
 use rand::Rng;
@@ -46,12 +41,30 @@ fn main() {
     wgpu_settings.features |= WgpuFeatures::POLYGON_MODE_LINE;
 
     App::new()
-        .add_plugins(DefaultPlugins.set(RenderPlugin {
-            render_creation: RenderCreation::Automatic(wgpu_settings),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(wgpu_settings),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Bevy Picking Example".to_string(),
+                        composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
+                        position: WindowPosition::Centered(MonitorSelection::Index(2)),
+                        transparent: true,
+                        cursor: Cursor {
+                            hit_test: false,
+                            ..default()
+                        },
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
+        .insert_resource(ClearColor(Color::rgba(0.1, 0.1, 0.1, 0.)))
         .add_plugins((
-            // EditorPlugin::new(),
+            EguiPlugin,
             FrameTimeDiagnosticsPlugin,
             EntityCountDiagnosticsPlugin,
             DefaultPickingPlugins::build(DefaultPickingPlugins)
@@ -63,18 +76,58 @@ fn main() {
         .add_systems(
             Update,
             (
-                auto_add_picking_to_meshes,
-                deselect_all_on_esc,
                 zoom,
-                ui_example_system,
+                ui_active_references,
+                close_on_esc,
+                change_transparency_mode,
             ),
         )
         .run();
 }
 
-fn ui_example_system(mut contexts: EguiContexts) {
-    egui::Window::new("Hello").show(contexts.ctx_mut(), |ui| {
-        ui.label("world");
+fn change_transparency_mode(
+    mut window_query: Query<&mut Window>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+) {
+    let mut window = window_query.single_mut();
+
+    if keyboard_input.just_pressed(KeyCode::KeyF) {
+        window.window_level = match window.window_level {
+            WindowLevel::Normal => WindowLevel::AlwaysOnTop,
+            WindowLevel::AlwaysOnTop => WindowLevel::Normal,
+            _ => WindowLevel::Normal,
+        };
+        window.mode = WindowMode::BorderlessFullscreen;
+    }
+
+    if keyboard_input.just_pressed(KeyCode::KeyD) {
+        window.cursor.hit_test = !window.cursor.hit_test;
+    }
+}
+
+fn close_on_esc(mut keyboard_input: ResMut<ButtonInput<KeyCode>>, mut exit: EventWriter<AppExit>) {
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        exit.send(AppExit);
+    }
+}
+
+fn ui_active_references(mut contexts: EguiContexts, mut refs: ResMut<References>) {
+    egui::Window::new("References").show(contexts.ctx_mut(), |ui| {
+        let references = refs.references.clone();
+        for (i, reference) in references.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let mut current = Some(i) == refs.current_reference;
+                let before = current;
+                ui.add(Checkbox::without_text(&mut current));
+                if current != before && !before {
+                    refs.set_current(i);
+                }
+                // button to disable reference
+                let mut active = !refs.disabled_references.contains(&i);
+                ui.checkbox(&mut active, reference.name.as_str());
+                refs.set_active(i, active);
+            });
+        }
     });
 }
 
@@ -82,13 +135,7 @@ fn ui_example_system(mut contexts: EguiContexts) {
 pub struct MainCamera;
 
 /// set up a simple 3D scene
-fn setup(
-    mut commands: Commands,
-    mut editor_camera: Query<&mut PanOrbitCamera>,
-    mut clear_color: ResMut<ClearColor>,
-) {
-    clear_color.0 = Color::rgb(0.1, 0.1, 0.1);
-
+fn setup(mut commands: Commands) {
     // light
     commands.spawn(DirectionalLightBundle {
         transform: Transform::from_xyz(20.0, 40.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -107,53 +154,6 @@ fn setup(
         },
         MainCamera,
     ));
-
-    let mut editor_controls = editor_camera.single_mut();
-    editor_controls.pan_button = ModifierAndMouseButton {
-        modifier: Some(KeyCode::Space),
-        mouse_button: MouseButton::Left,
-    };
-    editor_controls.orbit_button = ModifierAndMouseButton {
-        modifier: Some(KeyCode::AltLeft),
-        mouse_button: MouseButton::Left,
-    };
-}
-
-fn auto_add_picking_to_meshes(
-    mut commands: Commands,
-    new_meshes: Query<Entity, Added<Handle<Mesh>>>,
-) {
-    fn pick(
-        event: Listener<Pointer<Click>>,
-        mut editor: ResMut<Editor>,
-        input: Res<ButtonInput<KeyCode>>,
-    ) {
-        if event.button != PointerButton::Primary {
-            return;
-        }
-
-        let entity = event.target();
-        let state = editor.window_state_mut::<HierarchyWindow>().unwrap();
-        // Simulating blender here. In blender's object mode or edit mode Shift works as Ctrl would in the file explorer.
-        let selection_mode =
-            SelectionMode::from_ctrl_shift(input.pressed(KeyCode::ShiftLeft), false);
-        state
-            .selected
-            .select(selection_mode, entity, |_, _| std::iter::once(entity));
-    }
-
-    for entity in new_meshes.iter() {
-        commands
-            .entity(entity)
-            .insert((PickableBundle::default(), On::<Pointer<Click>>::run(pick)));
-    }
-}
-
-fn deselect_all_on_esc(input: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
-    if input.just_pressed(KeyCode::Escape) {
-        let state = editor.window_state_mut::<HierarchyWindow>().unwrap();
-        state.selected.clear();
-    }
 }
 
 fn zoom(mut input: EventReader<MouseWheel>, mut camera: Query<&mut Transform, With<MainCamera>>) {

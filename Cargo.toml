@@ -8,8 +8,7 @@ opt-level = 2
 
 [dependencies]
 bevy = { version = "0.13.1", features = ["dynamic_linking"] }
-bevy-inspector-egui = "0.23.4"
-bevy_editor_pls = { git = "https://github.com/chronicl/bevy_editor_pls" }
+bevy_egui = "0.26.0"
 bevy_infinite_grid = { git = "https://github.com/XYCaptain/bevy_infinite_grid" }
 bevy_mod_picking = "0.18.2"
 rand = "0.8.5"
