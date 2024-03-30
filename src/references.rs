@@ -200,9 +200,10 @@ impl References {
                             outline_meshes.push((parent.get(), outline_mesh_handle));
 
                             let material = materials.get_mut(material).unwrap();
-                            material.base_color = material.base_color.with_a(0.2);
-                            material.alpha_mode = AlphaMode::Blend;
-                            material.cull_mode = Some(Face::Back);
+                            // For transparent material
+                            // material.base_color = material.base_color.with_a(0.2);
+                            // material.alpha_mode = AlphaMode::Blend;
+                            // material.cull_mode = Some(Face::Back);
                         }
 
                         let material = materials.add(StandardMaterial {

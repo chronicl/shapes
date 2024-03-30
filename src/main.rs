@@ -49,14 +49,14 @@ fn main() {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Bevy Picking Example".to_string(),
-                        composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
+                        title: "Shapes".to_string(),
+                        // composite_alpha_mode: CompositeAlphaMode::PostMultiplied,
                         position: WindowPosition::Centered(MonitorSelection::Index(2)),
-                        transparent: true,
-                        cursor: Cursor {
-                            hit_test: false,
-                            ..default()
-                        },
+                        // transparent: true,
+                        // cursor: Cursor {
+                        //     hit_test: false,
+                        //     ..default()
+                        // },
                         ..default()
                     }),
                     ..default()
@@ -79,7 +79,7 @@ fn main() {
                 zoom,
                 ui_active_references,
                 close_on_esc,
-                change_transparency_mode,
+                // change_transparency_mode,
             ),
         )
         .run();
